@@ -1,7 +1,16 @@
 {
-  "name": "react-diff-viewer-continued",
-  "version": "4.2.0",
+  "name": "@bochenw/react-diff-viewer-continued",
+  "version": "4.3.0",
   "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "lib/cjs/src",
+    "lib/esm/src",
+    "LICENSE",
+    "README.md"
+  ],
   "description": "Continuation of a simple and beautiful text diff viewer component made with diff and React",
   "keywords": [
     "review",
@@ -13,11 +22,12 @@
     "react-component",
     "ui"
   ],
-  "repository": "https://github.com/Aeolun/react-diff-viewer-continued",
+  "repository": "https://github.com/wbcustc/react-diff-viewer-continued",
   "license": "MIT",
   "authors": [
     "Pranesh Ravi<praneshpranesh@gmail.com>",
-    "Bart Riepe <bart@serial-experiments.com>"
+    "Bart Riepe <bart@serial-experiments.com>",
+    "Bochen Wang <victorwang.bc@gmail.com>"
   ],
   "type": "module",
   "exports": {
