@@ -23,6 +23,7 @@ import { Fold } from "./fold.js";
 import { LineNumberPrefix } from "./line-number-prefix.js";
 import { DiffRow } from "./diff-row.js";
 import { SkippedLineIndicator } from "./skipped-line-indicator.js";
+import { CommentRow, type CommentRenderData } from "./comment-row.js";
 
 export { LineNumberPrefix } from "./line-number-prefix.js";
 
@@ -115,6 +116,24 @@ export interface ReactDiffViewerProps {
    * Show debug overlay with virtualization info (for development)
    */
   showDebugInfo?: boolean
+  /**
+   * Array of line IDs that have comments to display.
+   * Uses the same format as highlightLines: "L-{num}" or "R-{num}".
+   * The library renders a comment <tr> below each line in this set,
+   * invoking renderComment to get the content.
+   */
+  commentLineIds?: string[];
+  /**
+   * Render prop called for each line ID in commentLineIds.
+   * Returns the consumer's comment UI to display in the comment row.
+   * The returned ReactElement is placed inside a <td> spanning the full table width.
+   */
+  renderComment?: (data: CommentRenderData) => ReactElement | null;
+  /**
+   * Estimated height (px) for comment rows before they are measured.
+   * Affects virtualization scroll accuracy. Defaults to 100.
+   */
+  estimatedCommentRowHeight?: number;
 }
 
 export interface ReactDiffViewerState {
@@ -147,6 +166,28 @@ class DiffViewer extends React.Component<
   private stickyHeaderRef: RefObject<HTMLDivElement | null> = React.createRef();
   private resizeObserver: ResizeObserver | null = null;
 
+  // Comment row height measurement for virtualization
+  private commentRowObserver: ResizeObserver | null = null;
+  private commentRowHeights: Map<string, number> = new Map();
+  private commentRowElements: Map<string, HTMLTableRowElement> = new Map();
+  private commentRowRefCache: Map<string, (el: HTMLTableRowElement | null) => void> = new Map();
+  private pendingOffsetRecalc = false;
+
+  private static readonly ESTIMATED_COMMENT_ROW_HEIGHT = 100;
+
+  /**
+   * Shallow comparison for string arrays — avoids unnecessary work when
+   * the consumer creates a new array reference with identical contents.
+   */
+  private static shallowArrayEqual(a?: string[], b?: string[]): boolean {
+    if (a === b) return true;
+    if (!a || !b || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
+  }
+
   public static defaultProps: ReactDiffViewerProps = {
     oldValue: "",
     newValue: "",
@@ -178,6 +219,83 @@ class DiffViewer extends React.Component<
       cumulativeOffsets: null,
     };
   }
+
+  /**
+   * Memoized conversion of commentLineIds array to Set for O(1) lookups.
+   */
+  private getCommentLineIdsSet: (ids: string[] | undefined) => Set<string> = memoize(
+    (ids: string[] | undefined): Set<string> => new Set(ids || []),
+  );
+
+  /**
+   * Memoized conversion of highlightLines array to Set for O(1) lookups.
+   */
+  private getHighlightLinesSet: (lines: string[] | undefined) => Set<string> = memoize(
+    (lines: string[] | undefined): Set<string> => new Set(lines || []),
+  );
+
+  /**
+   * Creates a ref callback for a CommentRow's <tr> element.
+   * When mounted, observes it for height changes via ResizeObserver.
+   * Callbacks are cached per lineId to avoid creating new closures on every render.
+   */
+  private getCommentRowRef = (lineId: string): ((el: HTMLTableRowElement | null) => void) => {
+    let cached = this.commentRowRefCache.get(lineId);
+    if (!cached) {
+      cached = (el: HTMLTableRowElement | null) => {
+        if (el) {
+          this.commentRowElements.set(lineId, el);
+          this.commentRowObserver?.observe(el);
+        } else {
+          const prev = this.commentRowElements.get(lineId);
+          if (prev) {
+            this.commentRowObserver?.unobserve(prev);
+          }
+          this.commentRowElements.delete(lineId);
+        }
+      };
+      this.commentRowRefCache.set(lineId, cached);
+    }
+    return cached;
+  };
+
+  /**
+   * Debounced offset recalculation — batches multiple ResizeObserver callbacks
+   * into a single requestAnimationFrame.
+   */
+  private scheduleOffsetRecalc = (): void => {
+    if (!this.pendingOffsetRecalc) {
+      this.pendingOffsetRecalc = true;
+      requestAnimationFrame(() => {
+        this.pendingOffsetRecalc = false;
+        this.recalculateOffsets();
+      });
+    }
+  };
+
+  /**
+   * Initializes the ResizeObserver for measuring comment row heights.
+   */
+  private initCommentRowObserver = (): void => {
+    if (typeof ResizeObserver === "undefined" || this.commentRowObserver) return;
+    this.commentRowObserver = new ResizeObserver((entries) => {
+      let changed = false;
+      for (const entry of entries) {
+        const el = entry.target as HTMLTableRowElement;
+        const lineId = el.getAttribute("data-comment-line");
+        if (!lineId) continue;
+        const height = entry.borderBoxSize?.[0]?.blockSize ?? el.offsetHeight;
+        const prev = this.commentRowHeights.get(lineId);
+        if (prev !== height) {
+          this.commentRowHeights.set(lineId, height);
+          changed = true;
+        }
+      }
+      if (changed && this.props.infiniteLoading) {
+        this.scheduleOffsetRecalc();
+      }
+    });
+  };
 
   /**
    * Computes word diff on-demand for a line, with caching.
@@ -317,9 +435,11 @@ class DiffViewer extends React.Component<
     charWidth: number,
     columnWidth: number,
     splitView: boolean,
+    commentLineIdsSet?: Set<string>,
   ): number[] {
     const offsets: number[] = [0];
     const seenBlocks = new Set<number>();
+    const estimatedCommentHeight = this.props.estimatedCommentRowHeight ?? DiffViewer.ESTIMATED_COMMENT_ROW_HEIGHT;
 
     for (let i = 0; i < lineInformation.length; i++) {
       const line = lineInformation[i];
@@ -343,7 +463,21 @@ class DiffViewer extends React.Component<
       const charsPerRow = Math.floor(columnWidth / charWidth);
       const visualRows = charsPerRow > 0 ? Math.max(1, Math.ceil(maxLen / charsPerRow)) : 1;
 
-      offsets.push(offsets[offsets.length - 1] + visualRows * DiffViewer.ESTIMATED_ROW_HEIGHT);
+      let lineHeight = visualRows * DiffViewer.ESTIMATED_ROW_HEIGHT;
+
+      // Add height for comment rows on this line
+      if (commentLineIdsSet && commentLineIdsSet.size > 0) {
+        const leftId = line.left?.lineNumber ? `L-${line.left.lineNumber}` : null;
+        const rightId = line.right?.lineNumber ? `R-${line.right.lineNumber}` : null;
+        if (leftId && commentLineIdsSet.has(leftId)) {
+          lineHeight += this.commentRowHeights.get(leftId) ?? estimatedCommentHeight;
+        }
+        if (rightId && rightId !== leftId && commentLineIdsSet.has(rightId)) {
+          lineHeight += this.commentRowHeights.get(rightId) ?? estimatedCommentHeight;
+        }
+      }
+
+      offsets.push(offsets[offsets.length - 1] + lineHeight);
     }
 
     return offsets;
@@ -390,6 +524,7 @@ class DiffViewer extends React.Component<
       charWidth,
       columnWidth,
       this.props.splitView,
+      this.getCommentLineIdsSet(this.props.commentLineIds),
     );
 
     this.setState({ cumulativeOffsets: offsets, contentColumnWidth: columnWidth, charWidth }, () => {
@@ -570,6 +705,13 @@ class DiffViewer extends React.Component<
     const cacheKey = this.getMemoisedKey()
     const { lineInformation = [], lineBlocks = [], blocks = [] } = computedDiffResult[cacheKey] ?? {}
 
+    // Build Set for O(1) comment line lookups
+    const commentLineIdsSet = this.getCommentLineIdsSet(this.props.commentLineIds);
+    const hasComments = commentLineIdsSet.size > 0 && !!this.props.renderComment;
+    const hasRenderGutter = !!this.props.renderGutter;
+    // Build Set for O(1) highlight line lookups
+    const highlightLinesSet = this.getHighlightLinesSet(this.props.highlightLines);
+
     // Calculate visible range for virtualization
     let visibleRowStart = 0;
     let visibleRowEnd = Infinity;
@@ -723,8 +865,8 @@ class DiffViewer extends React.Component<
           rightLineNumber={line.right.lineNumber}
           rightType={line.right.type}
           rightValue={rightValue}
-          highlightLeft={this.props.highlightLines?.includes(`L-${line.left.lineNumber}`) ?? false}
-          highlightRight={this.props.highlightLines?.includes(`R-${line.right.lineNumber}`) ?? false}
+          highlightLeft={highlightLinesSet.has(`L-${line.left.lineNumber}`)}
+          highlightRight={highlightLinesSet.has(`R-${line.right.lineNumber}`)}
           splitView={splitView}
           hideLineNumbers={this.props.hideLineNumbers}
           styles={this.styles}
@@ -736,6 +878,45 @@ class DiffViewer extends React.Component<
           hasCumulativeOffsets={!!cumulativeOffsets}
         />
       );
+
+      // Inject comment rows after the DiffRow
+      if (hasComments) {
+        const leftLineId = line.left?.lineNumber ? `L-${line.left.lineNumber}` : null;
+        const rightLineId = line.right?.lineNumber ? `R-${line.right.lineNumber}` : null;
+
+        if (leftLineId && commentLineIdsSet.has(leftLineId)) {
+          diffNodes.push(
+            <CommentRow
+              key={`comment-${leftLineId}`}
+              lineId={leftLineId}
+              lineNumber={line.left.lineNumber}
+              prefix={LineNumberPrefix.LEFT}
+              splitView={splitView}
+              hideLineNumbers={this.props.hideLineNumbers}
+              hasRenderGutter={hasRenderGutter}
+              styles={this.styles}
+              renderComment={this.props.renderComment}
+              trRef={this.getCommentRowRef(leftLineId)}
+            />,
+          );
+        }
+        if (rightLineId && rightLineId !== leftLineId && commentLineIdsSet.has(rightLineId)) {
+          diffNodes.push(
+            <CommentRow
+              key={`comment-${rightLineId}`}
+              lineId={rightLineId}
+              lineNumber={line.right.lineNumber}
+              prefix={LineNumberPrefix.RIGHT}
+              splitView={splitView}
+              hideLineNumbers={this.props.hideLineNumbers}
+              hasRenderGutter={hasRenderGutter}
+              styles={this.styles}
+              renderComment={this.props.renderComment}
+              trRef={this.getCommentRowRef(rightLineId)}
+            />,
+          );
+        }
+      }
     }
 
     // Calculate total content height
@@ -799,6 +980,26 @@ class DiffViewer extends React.Component<
       }))
       this.memoisedCompute();
     }
+
+    // Recalculate offsets when commentLineIds change
+    if (!DiffViewer.shallowArrayEqual(prevProps.commentLineIds, this.props.commentLineIds)) {
+      // Clean stale entries from height measurement maps and ref cache
+      const currentSet = this.getCommentLineIdsSet(this.props.commentLineIds);
+      for (const lineId of this.commentRowHeights.keys()) {
+        if (!currentSet.has(lineId)) {
+          this.commentRowHeights.delete(lineId);
+          this.commentRowRefCache.delete(lineId);
+          const el = this.commentRowElements.get(lineId);
+          if (el) {
+            this.commentRowObserver?.unobserve(el);
+            this.commentRowElements.delete(lineId);
+          }
+        }
+      }
+      if (this.props.infiniteLoading) {
+        this.scheduleOffsetRecalc();
+      }
+    }
   }
 
   componentDidMount() {
@@ -818,10 +1019,14 @@ class DiffViewer extends React.Component<
         this.resizeObserver.observe(container);
       }
     }
+
+    // Initialize comment row observer for height measurement
+    this.initCommentRowObserver();
   }
 
   componentWillUnmount() {
     this.resizeObserver?.disconnect();
+    this.commentRowObserver?.disconnect();
   }
 
   public render = (): ReactElement => {
@@ -1100,3 +1305,4 @@ export default DiffViewer;
 export { DiffMethod };
 export { default as computeStyles } from "./styles.js";
 export type { ReactDiffViewerStylesOverride, ReactDiffViewerStyles };
+export type { CommentRenderData } from "./comment-row.js";

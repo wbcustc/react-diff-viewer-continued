@@ -33,6 +33,8 @@ export interface ReactDiffViewerStyles {
   noWrap?: string;
   splitView?: string;
   allExpandButton?: string;
+  commentRow?: string;
+  commentCell?: string;
   [key: string]: string | undefined;
 }
 
@@ -97,6 +99,8 @@ export interface ReactDiffViewerStylesOverride {
   titleBlock?: Interpolation;
   splitView?: Interpolation;
   allExpandButton?: Interpolation;
+  commentRow?: Interpolation;
+  commentCell?: Interpolation;
 }
 
 export default (
@@ -426,6 +430,18 @@ export default (
     label: "empty-line",
   });
 
+  const commentRow = css({
+    label: "comment-row",
+    borderTop: `1px solid ${variables.diffViewerTitleBorderColor}`,
+    borderBottom: `1px solid ${variables.diffViewerTitleBorderColor}`,
+    backgroundColor: variables.diffViewerBackground,
+  });
+
+  const commentCell = css({
+    label: "comment-cell",
+    padding: 0,
+  });
+
   const marker = css({
     width: 28,
     paddingLeft: 10,
@@ -544,6 +560,8 @@ export default (
     columnHeaders,
     titleBlock,
     allExpandButton,
+    commentRow,
+    commentCell,
   };
 
   const computerOverrideStyles: ReactDiffViewerStyles = Object.keys(
