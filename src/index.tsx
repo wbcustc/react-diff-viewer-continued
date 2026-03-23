@@ -1,6 +1,6 @@
 import cn from "classnames";
 import * as React from "react";
-import type { JSX, ReactElement, RefObject } from "react";
+import type { ReactElement, RefObject } from "react";
 
 import type { Change } from "diff";
 import memoize from "memoize-one";
@@ -20,181 +20,11 @@ import computeStyles, {
 } from "./styles.js";
 
 import { Fold } from "./fold.js";
+import { LineNumberPrefix } from "./line-number-prefix.js";
+import { DiffRow } from "./diff-row.js";
+import { SkippedLineIndicator } from "./skipped-line-indicator.js";
 
-type IntrinsicElements = JSX.IntrinsicElements;
-
-/**
- * Applies diff styling (ins/del tags) to pre-highlighted HTML by walking through
- * the HTML and wrapping text portions based on character positions in the diff.
- */
-function applyDiffToHighlightedHtml(
-  html: string,
-  diffArray: DiffInformation[],
-  styles: { wordDiff: string; wordAdded: string; wordRemoved: string },
-): string {
-  // Build diff ranges with character positions
-  interface DiffRange {
-    start: number;
-    end: number;
-    type: DiffType;
-  }
-
-  const ranges: DiffRange[] = [];
-  let pos = 0;
-  for (const diff of diffArray) {
-    const value = typeof diff.value === "string" ? diff.value : "";
-    if (value.length > 0) {
-      ranges.push({ start: pos, end: pos + value.length, type: diff.type });
-      pos += value.length;
-    }
-  }
-
-  // Parse HTML into tag and text segments
-  interface Segment {
-    type: "tag" | "text";
-    content: string;
-  }
-
-  const segments: Segment[] = [];
-  let i = 0;
-  while (i < html.length) {
-    if (html[i] === "<") {
-      const tagEnd = html.indexOf(">", i);
-      if (tagEnd === -1) {
-        // Malformed HTML, treat rest as text
-        segments.push({ type: "text", content: html.slice(i) });
-        break;
-      }
-      segments.push({ type: "tag", content: html.slice(i, tagEnd + 1) });
-      i = tagEnd + 1;
-    } else {
-      // Find the next tag or end of string
-      let textEnd = html.indexOf("<", i);
-      if (textEnd === -1) textEnd = html.length;
-      segments.push({ type: "text", content: html.slice(i, textEnd) });
-      i = textEnd;
-    }
-  }
-
-  // Helper to decode HTML entities for character counting
-  function decodeEntities(text: string): string {
-    return text
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
-      .replace(/&amp;/g, "&")
-      .replace(/&quot;/g, '"')
-      .replace(/&#39;/g, "'")
-      .replace(/&#x27;/g, "'")
-      .replace(/&nbsp;/g, "\u00A0");
-  }
-
-  // Helper to get the wrapper tag for a diff type
-  function getWrapper(
-    type: DiffType,
-  ): { open: string; close: string } | null {
-    if (type === DiffType.ADDED) {
-      return {
-        open: `<ins class="${styles.wordDiff} ${styles.wordAdded}">`,
-        close: "</ins>",
-      };
-    }
-    if (type === DiffType.REMOVED) {
-      return {
-        open: `<del class="${styles.wordDiff} ${styles.wordRemoved}">`,
-        close: "</del>",
-      };
-    }
-    return {
-      open: `<span class="${styles.wordDiff}">`,
-      close: "</span>",
-    };
-  }
-
-  // Process segments, tracking text position
-  let textPos = 0;
-  let result = "";
-
-  for (const segment of segments) {
-    if (segment.type === "tag") {
-      result += segment.content;
-    } else {
-      // Text segment - we need to split it according to diff ranges
-      const text = segment.content;
-      const decodedText = decodeEntities(text);
-
-      // Walk through the text, character by character (in decoded form)
-      // but output the original encoded form
-      let localDecodedPos = 0;
-      let localEncodedPos = 0;
-
-      while (localDecodedPos < decodedText.length) {
-        const globalPos = textPos + localDecodedPos;
-
-        // Find the range that covers this position
-        const range = ranges.find(
-          (r) => globalPos >= r.start && globalPos < r.end,
-        );
-
-        if (!range) {
-          // No range covers this position (shouldn't happen, but be safe)
-          // Just output the character
-          const char = text[localEncodedPos];
-          result += char;
-          localEncodedPos++;
-          localDecodedPos++;
-          continue;
-        }
-
-        // How many decoded characters until the end of this range?
-        const charsUntilRangeEnd = range.end - globalPos;
-        // How many decoded characters until the end of this text segment?
-        const charsUntilTextEnd = decodedText.length - localDecodedPos;
-        // Take the minimum
-        const charsToTake = Math.min(charsUntilRangeEnd, charsUntilTextEnd);
-
-        // Now we need to find the corresponding encoded substring
-        // Walk through encoded text, counting decoded characters
-        let encodedChunkEnd = localEncodedPos;
-        let decodedCount = 0;
-        while (decodedCount < charsToTake && encodedChunkEnd < text.length) {
-          if (text[encodedChunkEnd] === "&") {
-            // Find entity end
-            const entityEnd = text.indexOf(";", encodedChunkEnd);
-            if (entityEnd !== -1 && entityEnd - encodedChunkEnd < 10) {
-              encodedChunkEnd = entityEnd + 1;
-            } else {
-              encodedChunkEnd++;
-            }
-          } else {
-            encodedChunkEnd++;
-          }
-          decodedCount++;
-        }
-
-        const chunk = text.slice(localEncodedPos, encodedChunkEnd);
-        const wrapper = getWrapper(range.type);
-
-        if (wrapper) {
-          result += wrapper.open + chunk + wrapper.close;
-        } else {
-          result += chunk;
-        }
-
-        localEncodedPos = encodedChunkEnd;
-        localDecodedPos += charsToTake;
-      }
-
-      textPos += decodedText.length;
-    }
-  }
-
-  return result;
-}
-
-export enum LineNumberPrefix {
-  LEFT = "L",
-  RIGHT = "R",
-}
+export { LineNumberPrefix } from "./line-number-prefix.js";
 
 export interface InfiniteLoadingProps {
   pageSize: number,
@@ -581,469 +411,7 @@ class DiffViewer extends React.Component<
   ) => ReactDiffViewerStyles = memoize(computeStyles);
 
   /**
-   * Returns a function with clicked line number in the closure. Returns an no-op function when no
-   * onLineNumberClick handler is supplied.
    *
-   * @param id Line id of a line.
-   */
-  private onLineNumberClickProxy = (id: string): any => {
-    if (this.props.onLineNumberClick) {
-      return (e: any): void => this.props.onLineNumberClick(id, e);
-    }
-    return (): void => {};
-  };
-
-  /**
-   * Checks if the current compare method should show word-level highlighting.
-   * Character, word-level, JSON, and YAML diffs benefit from highlighting individual changes.
-   * JSON/YAML use CHARS internally for word-level diff, so they should be highlighted.
-   */
-  private shouldHighlightWordDiff = (): boolean => {
-    const { compareMethod } = this.props;
-    return (
-      compareMethod === DiffMethod.CHARS ||
-      compareMethod === DiffMethod.WORDS ||
-      compareMethod === DiffMethod.WORDS_WITH_SPACE ||
-      compareMethod === DiffMethod.JSON ||
-      compareMethod === DiffMethod.YAML
-    );
-  };
-
-  /**
-   * Maps over the word diff and constructs the required React elements to show word diff.
-   *
-   * @param diffArray Word diff information derived from line information.
-   * @param renderer Optional renderer to format diff words. Useful for syntax highlighting.
-   */
-  private renderWordDiff = (
-    diffArray: DiffInformation[],
-    renderer?: (chunk: string) => JSX.Element,
-  ): ReactElement[] => {
-    const showHighlight = this.shouldHighlightWordDiff();
-
-    // Reconstruct the full line from diff chunks
-    const fullLine = diffArray
-      .map((d) => (typeof d.value === "string" ? d.value : ""))
-      .join("");
-
-    // For very long lines (>500 chars), skip fancy processing - just render plain text
-    // without word-level highlighting to avoid performance issues
-    const MAX_LINE_LENGTH = 500;
-    if (fullLine.length > MAX_LINE_LENGTH) {
-      return [<span key="long-line">{fullLine}</span>];
-    }
-
-    // If we have a renderer, try to highlight the full line first,
-    // then apply diff styling to preserve proper tokenization.
-    if (renderer) {
-      // Get the syntax-highlighted content
-      const highlighted = renderer(fullLine);
-
-      // Check if the renderer uses dangerouslySetInnerHTML (common with Prism, highlight.js, etc.)
-      const htmlContent = highlighted?.props?.dangerouslySetInnerHTML?.__html;
-      if (typeof htmlContent === "string") {
-        // Apply diff styling to the highlighted HTML
-        const styledHtml = applyDiffToHighlightedHtml(htmlContent, diffArray, {
-          wordDiff: this.styles.wordDiff,
-          wordAdded: showHighlight ? this.styles.wordAdded : "",
-          wordRemoved: showHighlight ? this.styles.wordRemoved : "",
-        });
-
-        // Clone the element with the modified HTML
-        return [
-          React.cloneElement(highlighted, {
-            key: "highlighted-diff",
-            dangerouslySetInnerHTML: { __html: styledHtml },
-          }),
-        ];
-      }
-
-      // Renderer doesn't use dangerouslySetInnerHTML - fall through to per-chunk rendering
-    }
-
-    // Fallback: render each chunk separately (used for JSON/YAML or non-HTML renderers)
-    return diffArray.map((wordDiff, i): JSX.Element => {
-      let content: string | JSX.Element;
-      if (typeof wordDiff.value === "string") {
-        content = wordDiff.value;
-      } else {
-        // If wordDiff.value is DiffInformation[], we don't handle it. See c0c99f5712.
-        content = undefined;
-      }
-
-      return wordDiff.type === DiffType.ADDED ? (
-        <ins
-          key={i}
-          className={cn(this.styles.wordDiff, {
-            [this.styles.wordAdded]: showHighlight,
-          })}
-        >
-          {content}
-        </ins>
-      ) : wordDiff.type === DiffType.REMOVED ? (
-        <del
-          key={i}
-          className={cn(this.styles.wordDiff, {
-            [this.styles.wordRemoved]: showHighlight,
-          })}
-        >
-          {content}
-        </del>
-      ) : (
-        <span key={i} className={cn(this.styles.wordDiff)}>
-          {content}
-        </span>
-      );
-    });
-  };
-
-  /**
-   * Maps over the line diff and constructs the required react elements to show line diff. It calls
-   * renderWordDiff when encountering word diff. This takes care of both inline and split view line
-   * renders.
-   *
-   * @param lineNumber Line number of the current line.
-   * @param type Type of diff of the current line.
-   * @param prefix Unique id to prefix with the line numbers.
-   * @param value Content of the line. It can be a string or a word diff array.
-   * @param additionalLineNumber Additional line number to be shown. Useful for rendering inline
-   *  diff view. Right line number will be passed as additionalLineNumber.
-   * @param additionalPrefix Similar to prefix but for additional line number.
-   */
-  private renderLine = (
-    lineNumber: number,
-    type: DiffType,
-    prefix: LineNumberPrefix,
-    value: string | DiffInformation[],
-    additionalLineNumber?: number,
-    additionalPrefix?: LineNumberPrefix,
-  ): ReactElement => {
-    const lineNumberTemplate = `${prefix}-${lineNumber}`;
-    const additionalLineNumberTemplate = `${additionalPrefix}-${additionalLineNumber}`;
-    const highlightLine =
-      this.props.highlightLines.includes(lineNumberTemplate) ||
-      this.props.highlightLines.includes(additionalLineNumberTemplate);
-    const added = type === DiffType.ADDED;
-    const removed = type === DiffType.REMOVED;
-    const changed = type === DiffType.CHANGED;
-    let content;
-    const hasWordDiff = Array.isArray(value);
-    if (hasWordDiff) {
-      content = this.renderWordDiff(value, this.props.renderContent);
-    } else if (this.props.renderContent) {
-      content = this.props.renderContent(value);
-    } else {
-      content = value;
-    }
-
-    let ElementType: keyof IntrinsicElements = "div";
-    if (added && !hasWordDiff) {
-      ElementType = "ins";
-    } else if (removed && !hasWordDiff) {
-      ElementType = "del";
-    }
-
-    return (
-      <>
-        {!this.props.hideLineNumbers && (
-          <td
-            onClick={
-              lineNumber && this.onLineNumberClickProxy(lineNumberTemplate)
-            }
-            className={cn(this.styles.gutter, {
-              [this.styles.emptyGutter]: !lineNumber,
-              [this.styles.diffAdded]: added,
-              [this.styles.diffRemoved]: removed,
-              [this.styles.diffChanged]: changed,
-              [this.styles.highlightedGutter]: highlightLine,
-            })}
-          >
-            <pre className={this.styles.lineNumber}>{lineNumber}</pre>
-          </td>
-        )}
-        {!this.props.splitView && !this.props.hideLineNumbers && (
-          <td
-            onClick={
-              additionalLineNumber &&
-              this.onLineNumberClickProxy(additionalLineNumberTemplate)
-            }
-            className={cn(this.styles.gutter, {
-              [this.styles.emptyGutter]: !additionalLineNumber,
-              [this.styles.diffAdded]: added,
-              [this.styles.diffRemoved]: removed,
-              [this.styles.diffChanged]: changed,
-              [this.styles.highlightedGutter]: highlightLine,
-            })}
-          >
-            <pre className={this.styles.lineNumber}>{additionalLineNumber}</pre>
-          </td>
-        )}
-        {this.props.renderGutter
-          ? this.props.renderGutter({
-              lineNumber,
-              type,
-              prefix,
-              value,
-              additionalLineNumber,
-              additionalPrefix,
-              styles: this.styles,
-            })
-          : null}
-        <td
-          className={cn(this.styles.marker, {
-            [this.styles.emptyLine]: !content,
-            [this.styles.diffAdded]: added,
-            [this.styles.diffRemoved]: removed,
-            [this.styles.diffChanged]: changed,
-            [this.styles.highlightedLine]: highlightLine,
-          })}
-        >
-          <pre>
-            {added && "+"}
-            {removed && "-"}
-          </pre>
-        </td>
-        <td
-          ref={prefix === LineNumberPrefix.LEFT && !this.state.cumulativeOffsets ? this.contentColumnRef : undefined}
-          className={cn(this.styles.content, {
-            [this.styles.emptyLine]: !content,
-            [this.styles.diffAdded]: added,
-            [this.styles.diffRemoved]: removed,
-            [this.styles.diffChanged]: changed,
-            [this.styles.highlightedLine]: highlightLine,
-            left: prefix === LineNumberPrefix.LEFT,
-            right: prefix === LineNumberPrefix.RIGHT,
-          })}
-          onMouseDown={() => {
-            const elements = document.getElementsByClassName(
-              prefix === LineNumberPrefix.LEFT ? "right" : "left",
-            );
-            for (let i = 0; i < elements.length; i++) {
-              const element = elements.item(i);
-              element.classList.add(this.styles.noSelect);
-            }
-          }}
-          title={
-            added && !hasWordDiff
-              ? "Added line"
-              : removed && !hasWordDiff
-                ? "Removed line"
-                : undefined
-          }
-        >
-          <ElementType className={this.styles.contentText}>
-            {content}
-          </ElementType>
-        </td>
-      </>
-    );
-  };
-
-  /**
-   * Generates lines for split view.
-   *
-   * @param obj Line diff information.
-   * @param obj.left Life diff information for the left pane of the split view.
-   * @param obj.right Life diff information for the right pane of the split view.
-   * @param index React key for the lines.
-   */
-  private renderSplitView = (
-    { left, right }: LineInformation,
-    index: number,
-  ): ReactElement => {
-    // Compute word diff on-demand if deferred
-    const { leftValue, rightValue } = this.getWordDiffValues(left, right, index);
-
-    return (
-      <tr key={index} className={this.styles.line}>
-        {this.renderLine(
-          left.lineNumber,
-          left.type,
-          LineNumberPrefix.LEFT,
-          leftValue,
-        )}
-        {this.renderLine(
-          right.lineNumber,
-          right.type,
-          LineNumberPrefix.RIGHT,
-          rightValue,
-        )}
-      </tr>
-    );
-  };
-
-  /**
-   * Generates lines for inline view.
-   *
-   * @param obj Line diff information.
-   * @param obj.left Life diff information for the added section of the inline view.
-   * @param obj.right Life diff information for the removed section of the inline view.
-   * @param index React key for the lines.
-   */
-  public renderInlineView = (
-    { left, right }: LineInformation,
-    index: number,
-  ): ReactElement => {
-    // Compute word diff on-demand if deferred
-    const { leftValue, rightValue } = this.getWordDiffValues(left, right, index);
-
-    let content;
-    if (left.type === DiffType.REMOVED && right.type === DiffType.ADDED) {
-      return (
-        <React.Fragment key={index}>
-          <tr className={this.styles.line}>
-            {this.renderLine(
-              left.lineNumber,
-              left.type,
-              LineNumberPrefix.LEFT,
-              leftValue,
-              null,
-            )}
-          </tr>
-          <tr className={this.styles.line}>
-            {this.renderLine(
-              null,
-              right.type,
-              LineNumberPrefix.RIGHT,
-              rightValue,
-              right.lineNumber,
-              LineNumberPrefix.RIGHT,
-            )}
-          </tr>
-        </React.Fragment>
-      );
-    }
-    if (left.type === DiffType.REMOVED) {
-      content = this.renderLine(
-        left.lineNumber,
-        left.type,
-        LineNumberPrefix.LEFT,
-        leftValue,
-        null,
-      );
-    }
-    if (left.type === DiffType.DEFAULT) {
-      content = this.renderLine(
-        left.lineNumber,
-        left.type,
-        LineNumberPrefix.LEFT,
-        leftValue,
-        right.lineNumber,
-        LineNumberPrefix.RIGHT,
-      );
-    }
-    if (right.type === DiffType.ADDED) {
-      content = this.renderLine(
-        null,
-        right.type,
-        LineNumberPrefix.RIGHT,
-        rightValue,
-        right.lineNumber,
-      );
-    }
-
-    return (
-      <tr key={index} className={this.styles.line}>
-        {content}
-      </tr>
-    );
-  };
-
-  /**
-   * Returns a function with clicked block number in the closure.
-   *
-   * @param id Cold fold block id.
-   */
-  private onBlockClickProxy =
-    (id: number): (() => void) =>
-    (): void =>
-      this.onBlockExpand(id);
-
-  /**
-   * Generates cold fold block. It also uses the custom message renderer when available to show
-   * cold fold messages.
-   *
-   * @param num Number of skipped lines between two blocks.
-   * @param blockNumber Code fold block id.
-   * @param leftBlockLineNumber First left line number after the current code fold block.
-   * @param rightBlockLineNumber First right line number after the current code fold block.
-   */
-  private renderSkippedLineIndicator = (
-    num: number,
-    blockNumber: number,
-    leftBlockLineNumber: number,
-    rightBlockLineNumber: number,
-  ): ReactElement => {
-    const { hideLineNumbers, splitView } = this.props;
-    const message = this.props.codeFoldMessageRenderer ? (
-      this.props.codeFoldMessageRenderer(
-        num,
-        leftBlockLineNumber,
-        rightBlockLineNumber,
-      )
-    ) : (
-      <span className={this.styles.codeFoldContent}>
-        @@ -{leftBlockLineNumber - num},{num} +{rightBlockLineNumber - num},{num} @@
-      </span>
-    );
-    const content = (
-      <td className={this.styles.codeFoldContentContainer}>
-        <button
-          type="button"
-          className={this.styles.codeFoldExpandButton}
-          onClick={this.onBlockClickProxy(blockNumber)}
-          tabIndex={0}
-        >
-          {message}
-        </button>
-      </td>
-    );
-    const isUnifiedViewWithoutLineNumbers = !splitView && !hideLineNumbers;
-    const expandGutter = (
-      <td className={this.styles.codeFoldGutter}>
-        <Expand />
-      </td>
-    );
-
-    return (
-      <tr
-        key={`${leftBlockLineNumber}-${rightBlockLineNumber}`}
-        className={this.styles.codeFold}
-        onClick={this.onBlockClickProxy(blockNumber)}
-        role="button"
-        tabIndex={0}
-      >
-        {!hideLineNumbers && expandGutter}
-        {this.props.renderGutter ? (
-          <td className={this.styles.codeFoldGutter} />
-        ) : null}
-        <td
-          className={cn({
-            [this.styles.codeFoldGutter]: isUnifiedViewWithoutLineNumbers,
-          })}
-        />
-
-        {/* Swap columns only for unified view without line numbers */}
-        {isUnifiedViewWithoutLineNumbers ? (
-          <React.Fragment>
-            <td />
-            {content}
-          </React.Fragment>
-        ) : (
-          <React.Fragment>
-            {content}
-            {this.props.renderGutter ? <td /> : null}
-            <td />
-            <td />
-            {!hideLineNumbers ? <td /> : null}
-          </React.Fragment>
-        )}
-      </tr>
-    );
-  };
-
-  /**
-   * 
    * Generates a unique cache key based on the current props used in diff computation.
    * 
    * This key is used to memoize results and avoid recomputation for the same inputs.
@@ -1320,14 +688,19 @@ class DiffViewer extends React.Component<
             lastLineOfBlock
           ) {
             diffNodes.push(
-              <React.Fragment key={lineIndex}>
-                {this.renderSkippedLineIndicator(
-                  blocks[blockIndex].lines,
-                  blockIndex,
-                  line.left.lineNumber,
-                  line.right.lineNumber,
-                )}
-              </React.Fragment>
+              <SkippedLineIndicator
+                key={`fold-${lineIndex}`}
+                num={blocks[blockIndex].lines}
+                blockNumber={blockIndex}
+                leftBlockLineNumber={line.left.lineNumber}
+                rightBlockLineNumber={line.right.lineNumber}
+                hideLineNumbers={this.props.hideLineNumbers}
+                splitView={this.props.splitView}
+                styles={this.styles}
+                onBlockClick={this.onBlockExpand}
+                codeFoldMessageRenderer={this.props.codeFoldMessageRenderer}
+                renderGutter={this.props.renderGutter}
+              />
             );
             continue;
           }
@@ -1337,10 +710,31 @@ class DiffViewer extends React.Component<
         }
       }
 
+      // Compute word diff on-demand if deferred
+      const { leftValue, rightValue } = this.getWordDiffValues(line.left, line.right, lineIndex);
+
       diffNodes.push(
-        splitView
-          ? this.renderSplitView(line, lineIndex)
-          : this.renderInlineView(line, lineIndex)
+        <DiffRow
+          key={lineIndex}
+          index={lineIndex}
+          leftLineNumber={line.left.lineNumber}
+          leftType={line.left.type}
+          leftValue={leftValue}
+          rightLineNumber={line.right.lineNumber}
+          rightType={line.right.type}
+          rightValue={rightValue}
+          highlightLeft={this.props.highlightLines?.includes(`L-${line.left.lineNumber}`) ?? false}
+          highlightRight={this.props.highlightLines?.includes(`R-${line.right.lineNumber}`) ?? false}
+          splitView={splitView}
+          hideLineNumbers={this.props.hideLineNumbers}
+          styles={this.styles}
+          onLineNumberClick={this.props.onLineNumberClick}
+          renderContent={this.props.renderContent}
+          renderGutter={this.props.renderGutter}
+          compareMethod={this.props.compareMethod}
+          contentColumnRef={this.contentColumnRef}
+          hasCumulativeOffsets={!!cumulativeOffsets}
+        />
       );
     }
 
