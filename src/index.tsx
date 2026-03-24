@@ -160,6 +160,15 @@ class DiffViewer extends React.Component<
   // Cache for on-demand word diff computation
   private wordDiffCache: Map<string, { left: DiffInformation[]; right: DiffInformation[] }> = new Map();
 
+  // Reference-equality cache for getMemoisedKey — avoids JSON.stringify on large inputs
+  private static cacheCounter = 0;
+  private lastCacheProps: {
+    oldValue: unknown; newValue: unknown; disableWordDiff: boolean;
+    compareMethod: unknown; linesOffset: number;
+    alwaysShowLines: unknown; extraLinesSurroundingDiff: number;
+  } | null = null;
+  private lastCacheKey: string = '';
+
   // Refs for measuring content column width and character width
   private contentColumnRef: RefObject<HTMLTableCellElement | null> = React.createRef();
   private charMeasureRef: RefObject<HTMLSpanElement | null> = React.createRef();
@@ -549,9 +558,9 @@ class DiffViewer extends React.Component<
   /**
    *
    * Generates a unique cache key based on the current props used in diff computation.
-   * 
-   * This key is used to memoize results and avoid recomputation for the same inputs.
-   * @returns A stringified JSON key representing the current diff settings and input values.
+   *
+   * Uses reference equality to avoid expensive JSON.stringify on large inputs.
+   * A new key is only generated when any relevant prop reference changes.
    *
    */
   private getMemoisedKey = () => {
@@ -565,15 +574,25 @@ class DiffViewer extends React.Component<
       extraLinesSurroundingDiff,
     } = this.props;
 
-    return JSON.stringify({
-      oldValue,
-      newValue,
-      disableWordDiff,
-      compareMethod,
-      linesOffset,
-      alwaysShowLines,
-      extraLinesSurroundingDiff,
-    });
+    if (
+      this.lastCacheProps &&
+      this.lastCacheProps.oldValue === oldValue &&
+      this.lastCacheProps.newValue === newValue &&
+      this.lastCacheProps.disableWordDiff === disableWordDiff &&
+      this.lastCacheProps.compareMethod === compareMethod &&
+      this.lastCacheProps.linesOffset === linesOffset &&
+      this.lastCacheProps.alwaysShowLines === alwaysShowLines &&
+      this.lastCacheProps.extraLinesSurroundingDiff === extraLinesSurroundingDiff
+    ) {
+      return this.lastCacheKey;
+    }
+
+    this.lastCacheKey = `k-${++DiffViewer.cacheCounter}`;
+    this.lastCacheProps = {
+      oldValue, newValue, disableWordDiff, compareMethod,
+      linesOffset, alwaysShowLines, extraLinesSurroundingDiff,
+    };
+    return this.lastCacheKey;
   }
 
   /**
