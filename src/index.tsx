@@ -439,6 +439,7 @@ class DiffViewer extends React.Component<
   ): number[] {
     const offsets: number[] = [0];
     const seenBlocks = new Set<number>();
+    const expandedBlocksSet = new Set(expandedBlocks);
     const estimatedCommentHeight = this.props.estimatedCommentRowHeight ?? DiffViewer.ESTIMATED_COMMENT_ROW_HEIGHT;
 
     for (let i = 0; i < lineInformation.length; i++) {
@@ -446,7 +447,7 @@ class DiffViewer extends React.Component<
 
       if (showDiffOnly) {
         const blockIndex = lineBlocks[i];
-        if (blockIndex !== undefined && !expandedBlocks.includes(blockIndex)) {
+        if (blockIndex !== undefined && !expandedBlocksSet.has(blockIndex)) {
           const isLastLine = blocks[blockIndex].endLine === i;
           if (!seenBlocks.has(blockIndex) && isLastLine) {
             seenBlocks.add(blockIndex);
@@ -711,6 +712,8 @@ class DiffViewer extends React.Component<
     const hasRenderGutter = !!this.props.renderGutter;
     // Build Set for O(1) highlight line lookups
     const highlightLinesSet = this.getHighlightLinesSet(this.props.highlightLines);
+    // Build Set for O(1) expanded block lookups
+    const expandedBlocksSet = new Set(expandedBlocks);
 
     // Calculate visible range for virtualization
     let visibleRowStart = 0;
@@ -760,7 +763,7 @@ class DiffViewer extends React.Component<
       const blockIndex = lineBlocks[i];
 
       if (showDiffOnly && blockIndex !== undefined) {
-        if (!expandedBlocks.includes(blockIndex)) {
+        if (!expandedBlocksSet.has(blockIndex)) {
           // Line is in a collapsed block
           const lastLineOfBlock = blocks[blockIndex].endLine === i;
           if (!seenBlocks.has(blockIndex) && lastLineOfBlock) {
@@ -826,7 +829,7 @@ class DiffViewer extends React.Component<
         if (blockIndex !== undefined) {
           const lastLineOfBlock = blocks[blockIndex].endLine === lineIndex;
           if (
-            !expandedBlocks.includes(blockIndex) &&
+            !expandedBlocksSet.has(blockIndex) &&
             lastLineOfBlock
           ) {
             diffNodes.push(
@@ -846,7 +849,7 @@ class DiffViewer extends React.Component<
             );
             continue;
           }
-          if (!expandedBlocks.includes(blockIndex)) {
+          if (!expandedBlocksSet.has(blockIndex)) {
             continue;
           }
         }

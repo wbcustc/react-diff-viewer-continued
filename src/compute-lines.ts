@@ -496,8 +496,8 @@ const computeLineInformation = (
   let leftLineNumber = linesOffset;
   let lineInformation: LineInformation[] = [];
   let counter = 0;
-  const diffLines: number[] = [];
-  const ignoreDiffIndexes: string[] = [];
+  const diffLines = new Set<number>();
+  const ignoreDiffIndexes = new Set<string>();
   const getLineInformation = (
     value: string,
     diffIndex: number,
@@ -512,7 +512,7 @@ const computeLineInformation = (
         const left: DiffInformation = {};
         const right: DiffInformation = {};
         if (
-          ignoreDiffIndexes.includes(`${diffIndex}-${lineIndex}`) ||
+          ignoreDiffIndexes.has(`${diffIndex}-${lineIndex}`) ||
           (evaluateOnlyFirstLine && lineIndex !== 0)
         ) {
           return undefined;
@@ -549,7 +549,7 @@ const computeLineInformation = (
                 // When identified as modification, push the next diff to ignore
                 // list as the next value will be added in this line computation as
                 // right and left values.
-                ignoreDiffIndexes.push(`${diffIndex + 1}-${lineIndex}`);
+                ignoreDiffIndexes.add(`${diffIndex + 1}-${lineIndex}`);
 
                 right.lineNumber = lineNumber;
                 if (left.value === rightValue) {
@@ -594,8 +594,8 @@ const computeLineInformation = (
             right.value = line;
           }
           if (countAsChange && !evaluateOnlyFirstLine) {
-            if (!diffLines.includes(counter)) {
-              diffLines.push(counter);
+            if (!diffLines.has(counter)) {
+              diffLines.add(counter);
             }
           }
         } else {
@@ -613,9 +613,9 @@ const computeLineInformation = (
         if (
           showLines?.includes(`L-${left.lineNumber}`) ||
           (showLines?.includes(`R-${right.lineNumber}`) &&
-            !diffLines.includes(counter))
+            !diffLines.has(counter))
         ) {
-          diffLines.push(counter);
+          diffLines.add(counter);
         }
 
         if (!evaluateOnlyFirstLine) {
@@ -627,15 +627,15 @@ const computeLineInformation = (
   };
 
   diffArray.forEach(({ added, removed, value }: diff.Change, index): void => {
-    lineInformation = [
-      ...lineInformation,
-      ...getLineInformation(value, index, added, removed),
-    ];
+    const newLines = getLineInformation(value, index, added, removed);
+    for (const item of newLines) {
+      lineInformation.push(item);
+    }
   });
 
   return {
     lineInformation,
-    diffLines,
+    diffLines: [...diffLines],
   };
 };
 
