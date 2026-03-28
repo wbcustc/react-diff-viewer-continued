@@ -77,9 +77,6 @@ export interface ReactDiffViewerProps {
   // Enable built-in shift+click range selection on line numbers.
   // Defaults to false for backward compatibility.
   enableLineRangeSelection?: boolean;
-  // Restrict range selection to "left", "right", or "both" sides.
-  // When omitted or "both", no side filtering is applied.
-  lineRangeSelectionSide?: "left" | "right" | "both";
   // Called when a range selection completes (shift+click).
   onLineRangeSelected?: (
     startLineId: string,
@@ -309,30 +306,17 @@ class DiffViewer extends React.Component<
 
     if (!this.props.enableLineRangeSelection) return;
 
-    if (this.props.lineRangeSelectionSide && this.props.lineRangeSelectionSide !== "both") {
-      const expectedPrefix = this.props.lineRangeSelectionSide === "left" ? "L" : "R";
-      const [clickPrefix] = lineId.split('-');
-      if (clickPrefix !== expectedPrefix) return;
-    }
+    // Only allow right-side line selections for range
+    const [clickPrefix] = lineId.split('-');
+    if (clickPrefix !== "R") return;
 
     if (event.shiftKey && this.state.rangeAnchor) {
-      const [anchorPrefix] = this.state.rangeAnchor.split('-');
-      const [clickPrefix] = lineId.split('-');
-      if (anchorPrefix === clickPrefix) {
-        // Same side: complete the range
-        this.setState({
-          rangeStart: this.state.rangeAnchor,
-          rangeEnd: lineId,
-        });
-        this.props.onLineRangeSelected?.(this.state.rangeAnchor, lineId);
-      } else {
-        // Cross-side: reset anchor, clear range
-        this.setState({
-          rangeAnchor: lineId,
-          rangeStart: null,
-          rangeEnd: null,
-        });
-      }
+      // Complete the range from anchor to clicked line
+      this.setState({
+        rangeStart: this.state.rangeAnchor,
+        rangeEnd: lineId,
+      });
+      this.props.onLineRangeSelected?.(this.state.rangeAnchor, lineId);
     } else {
       // Non-shift click: set new anchor and 1-line range
       this.setState({
@@ -345,31 +329,46 @@ class DiffViewer extends React.Component<
   };
 
   /**
-   * Context menu handler for diff rows. Fires onLineRangeContextMenu
-   * only when right-clicking a row within the current range selection.
+   * Context menu handler for diff rows. Always suppresses the browser
+   * context menu when onLineRangeContextMenu is provided.
+   *
+   * - Right-click within an existing range → keeps the range, fires callback.
+   * - Right-click outside a range (or no range) → sets a single-line range
+   *   on the right-side line, then fires callback.
    */
   private handleRowContextMenu = (
     event: React.MouseEvent<HTMLTableRowElement>,
   ): void => {
     if (!this.props.onLineRangeContextMenu) return;
 
+    // Always suppress browser context menu when callback is provided
+    event.preventDefault();
+
     const { rangeStart, rangeEnd } = this.state;
-    if (!rangeStart || !rangeEnd) return;
-
-    const rangeSet = this.getRangeSelectionSet(rangeStart, rangeEnd);
-    if (rangeSet.size === 0) return;
-
     const tr = event.currentTarget;
-    const leftLine = tr.dataset.leftLine;
     const rightLine = tr.dataset.rightLine;
 
-    const leftInRange = leftLine && rangeSet.has(`L-${leftLine}`);
-    const rightInRange = rightLine && rangeSet.has(`R-${rightLine}`);
+    // Check if click is within existing range
+    if (rangeStart && rangeEnd) {
+      const rangeSet = this.getRangeSelectionSet(rangeStart, rangeEnd);
 
-    if (leftInRange || rightInRange) {
-      event.preventDefault();
-      this.props.onLineRangeContextMenu(event, rangeStart, rangeEnd);
+      if (rightLine && rangeSet.has(`R-${rightLine}`)) {
+        // Within range → keep range, fire callback
+        this.props.onLineRangeContextMenu(event, rangeStart, rangeEnd);
+        return;
+      }
     }
+
+    // Outside range or no range → create single-line range on the right-side line
+    if (!rightLine) return;
+
+    const lineId = `R-${rightLine}`;
+    this.setState({
+      rangeAnchor: lineId,
+      rangeStart: lineId,
+      rangeEnd: lineId,
+    });
+    this.props.onLineRangeContextMenu(event, lineId, lineId);
   };
 
   /**

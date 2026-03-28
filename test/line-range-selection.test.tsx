@@ -212,6 +212,31 @@ function findGutterCells(container: HTMLElement): HTMLTableCellElement[] {
   return cells;
 }
 
+/**
+ * Find the right-side gutter cell (line number) per row.
+ * Range selection always uses right-side lines, so tests should click these.
+ * In both split and inline views, this is the second gutter <td> with a number.
+ */
+function findRightGutterCells(container: HTMLElement): HTMLTableCellElement[] {
+  const rows = container.querySelectorAll("tr[data-right-line]");
+  const cells: HTMLTableCellElement[] = [];
+  for (const row of rows) {
+    const tds = row.querySelectorAll("td");
+    const gutterTds: HTMLTableCellElement[] = [];
+    for (const td of tds) {
+      const pre = td.querySelector("pre");
+      if (pre && /^\d+$/.test(pre.textContent?.trim() || "")) {
+        gutterTds.push(td as HTMLTableCellElement);
+      }
+    }
+    // In inline view there are two gutter cells; take the second (right) one
+    if (gutterTds.length >= 2) {
+      cells.push(gutterTds[1]);
+    }
+  }
+  return cells;
+}
+
 // ─────────────────────────────────────────────────────────────
 // DiffViewer — line range selection integration
 // ─────────────────────────────────────────────────────────────
@@ -286,7 +311,7 @@ describe("DiffViewer line range selection", () => {
 
     let gutterCells: HTMLTableCellElement[] = [];
     await waitFor(() => {
-      gutterCells = findGutterCells(container);
+      gutterCells = findRightGutterCells(container);
       expect(gutterCells.length).toBeGreaterThan(2);
     });
 
@@ -297,8 +322,8 @@ describe("DiffViewer line range selection", () => {
     // First call: single click sets 1-line range
     // Second call: shift+click extends range
     const [startId, endId] = onLineRangeSelected.mock.calls[1];
-    expect(startId).toMatch(/^[LR]-\d+$/);
-    expect(endId).toMatch(/^[LR]-\d+$/);
+    expect(startId).toMatch(/^R-\d+$/);
+    expect(endId).toMatch(/^R-\d+$/);
   });
 
   it("clears range and sets new anchor on non-shift click", async () => {
@@ -317,7 +342,7 @@ describe("DiffViewer line range selection", () => {
 
     let gutterCells: HTMLTableCellElement[] = [];
     await waitFor(() => {
-      gutterCells = findGutterCells(container);
+      gutterCells = findRightGutterCells(container);
       expect(gutterCells.length).toBeGreaterThan(5);
     });
 
@@ -350,7 +375,7 @@ describe("DiffViewer line range selection", () => {
 
     let gutterCells: HTMLTableCellElement[] = [];
     await waitFor(() => {
-      gutterCells = findGutterCells(container);
+      gutterCells = findRightGutterCells(container);
       expect(gutterCells.length).toBeGreaterThan(3);
     });
 
@@ -364,11 +389,11 @@ describe("DiffViewer line range selection", () => {
 
     expect(onLineRangeContextMenu).toHaveBeenCalledTimes(1);
     const [, startId, endId] = onLineRangeContextMenu.mock.calls[0];
-    expect(startId).toMatch(/^[LR]-\d+$/);
-    expect(endId).toMatch(/^[LR]-\d+$/);
+    expect(startId).toMatch(/^R-\d+$/);
+    expect(endId).toMatch(/^R-\d+$/);
   });
 
-  it("does NOT fire onLineRangeContextMenu when right-clicking outside the range", async () => {
+  it("fires onLineRangeContextMenu with single-line range when right-clicking outside the range", async () => {
     const onLineRangeContextMenu = vi.fn();
 
     const { container } = render(
@@ -384,7 +409,7 @@ describe("DiffViewer line range selection", () => {
 
     let gutterCells: HTMLTableCellElement[] = [];
     await waitFor(() => {
-      gutterCells = findGutterCells(container);
+      gutterCells = findRightGutterCells(container);
       expect(gutterCells.length).toBeGreaterThan(5);
     });
 
@@ -396,10 +421,14 @@ describe("DiffViewer line range selection", () => {
     const outsideRow = gutterCells[gutterCells.length - 1].closest("tr");
     fireEvent.contextMenu(outsideRow);
 
-    expect(onLineRangeContextMenu).not.toHaveBeenCalled();
+    // Should fire with a single-line range for the clicked line
+    expect(onLineRangeContextMenu).toHaveBeenCalledTimes(1);
+    const [, startId, endId] = onLineRangeContextMenu.mock.calls[0];
+    expect(startId).toBe(endId);
+    expect(startId).toMatch(/^[LR]-\d+$/);
   });
 
-  it("does NOT fire onLineRangeContextMenu when no range is selected", async () => {
+  it("fires onLineRangeContextMenu with single-line range when no range is selected", async () => {
     const onLineRangeContextMenu = vi.fn();
 
     const { container } = render(
@@ -422,7 +451,93 @@ describe("DiffViewer line range selection", () => {
     const firstRow = container.querySelector("tr[data-left-line]");
     fireEvent.contextMenu(firstRow);
 
-    expect(onLineRangeContextMenu).not.toHaveBeenCalled();
+    // Should fire with a single-line range for the clicked line
+    expect(onLineRangeContextMenu).toHaveBeenCalledTimes(1);
+    const [, startId, endId] = onLineRangeContextMenu.mock.calls[0];
+    expect(startId).toBe(endId);
+    expect(startId).toMatch(/^[LR]-\d+$/);
+  });
+
+  it("always calls preventDefault when onLineRangeContextMenu is provided", async () => {
+    const onLineRangeContextMenu = vi.fn();
+
+    const { container } = render(
+      <DiffViewer
+        oldValue={oldCode}
+        newValue={newCode}
+        splitView={true}
+        showDiffOnly={false}
+        enableLineRangeSelection={true}
+        onLineRangeContextMenu={onLineRangeContextMenu}
+      />,
+    );
+
+    await waitFor(() => {
+      const rows = container.querySelectorAll("tr[data-left-line]");
+      expect(rows.length).toBeGreaterThan(0);
+    });
+
+    const firstRow = container.querySelector("tr[data-left-line]");
+    const event = new MouseEvent("contextmenu", { bubbles: true });
+    const preventDefaultSpy = vi.spyOn(event, "preventDefault");
+
+    firstRow.dispatchEvent(event);
+
+    expect(preventDefaultSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("in unified view, only selects right-side lines on click", async () => {
+    const onLineRangeSelected = vi.fn();
+
+    const { container } = render(
+      <DiffViewer
+        oldValue={oldCode}
+        newValue={newCode}
+        splitView={false}
+        showDiffOnly={false}
+        enableLineRangeSelection={true}
+        onLineRangeSelected={onLineRangeSelected}
+      />,
+    );
+
+    let gutterCells: HTMLTableCellElement[] = [];
+    await waitFor(() => {
+      gutterCells = findGutterCells(container);
+      expect(gutterCells.length).toBeGreaterThan(2);
+    });
+
+    // findGutterCells returns the first (left) gutter cell per row.
+    // In unified view, clicking the left gutter should be ignored.
+    fireEvent.click(gutterCells[0]);
+    expect(onLineRangeSelected).not.toHaveBeenCalled();
+  });
+
+  it("in unified view, context menu uses right-side line", async () => {
+    const onLineRangeContextMenu = vi.fn();
+
+    const { container } = render(
+      <DiffViewer
+        oldValue={oldCode}
+        newValue={newCode}
+        splitView={false}
+        showDiffOnly={false}
+        enableLineRangeSelection={true}
+        onLineRangeContextMenu={onLineRangeContextMenu}
+      />,
+    );
+
+    await waitFor(() => {
+      const rows = container.querySelectorAll("tr[data-right-line]");
+      expect(rows.length).toBeGreaterThan(0);
+    });
+
+    const firstRow = container.querySelector("tr[data-right-line]");
+    fireEvent.contextMenu(firstRow);
+
+    expect(onLineRangeContextMenu).toHaveBeenCalledTimes(1);
+    const [, startId, endId] = onLineRangeContextMenu.mock.calls[0];
+    expect(startId).toMatch(/^R-\d+$/);
+    expect(startId).toBe(endId);
   });
 
   it("works correctly in inline view", async () => {
@@ -441,7 +556,7 @@ describe("DiffViewer line range selection", () => {
 
     let gutterCells: HTMLTableCellElement[] = [];
     await waitFor(() => {
-      gutterCells = findGutterCells(container);
+      gutterCells = findRightGutterCells(container);
       expect(gutterCells.length).toBeGreaterThan(2);
     });
 
