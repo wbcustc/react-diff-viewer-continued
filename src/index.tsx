@@ -77,6 +77,9 @@ export interface ReactDiffViewerProps {
   // Enable built-in shift+click range selection on line numbers.
   // Defaults to false for backward compatibility.
   enableLineRangeSelection?: boolean;
+  // Restrict range selection to "left", "right", or "both" sides.
+  // When omitted or "both", no side filtering is applied.
+  lineRangeSelectionSide?: "left" | "right" | "both";
   // Called when a range selection completes (shift+click).
   onLineRangeSelected?: (
     startLineId: string,
@@ -306,6 +309,12 @@ class DiffViewer extends React.Component<
 
     if (!this.props.enableLineRangeSelection) return;
 
+    if (this.props.lineRangeSelectionSide && this.props.lineRangeSelectionSide !== "both") {
+      const expectedPrefix = this.props.lineRangeSelectionSide === "left" ? "L" : "R";
+      const [clickPrefix] = lineId.split('-');
+      if (clickPrefix !== expectedPrefix) return;
+    }
+
     if (event.shiftKey && this.state.rangeAnchor) {
       const [anchorPrefix] = this.state.rangeAnchor.split('-');
       const [clickPrefix] = lineId.split('-');
@@ -477,6 +486,13 @@ class DiffViewer extends React.Component<
       return true;
     }
     return false;
+  };
+
+  /**
+   * Clears the current line range selection. Exposed to parent components via refs.
+   */
+  public clearRangeSelection = (): void => {
+    this.setState({ rangeAnchor: null, rangeStart: null, rangeEnd: null });
   };
 
   /**
