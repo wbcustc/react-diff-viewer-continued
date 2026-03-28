@@ -74,6 +74,21 @@ export interface ReactDiffViewerProps {
     lineId: string,
     event: React.MouseEvent<HTMLTableCellElement>,
   ) => void;
+  // Enable built-in shift+click range selection on line numbers.
+  // Defaults to false for backward compatibility.
+  enableLineRangeSelection?: boolean;
+  // Called when a range selection completes (shift+click).
+  onLineRangeSelected?: (
+    startLineId: string,
+    endLineId: string,
+  ) => void;
+  // Called when the user right-clicks on a row within the selected range.
+  // The library calls preventDefault() before invoking this callback.
+  onLineRangeContextMenu?: (
+    event: React.MouseEvent<HTMLTableRowElement>,
+    startLineId: string,
+    endLineId: string,
+  ) => void;
   // render gutter
   renderGutter?: (data: {
     lineNumber: number;
@@ -149,6 +164,10 @@ export interface ReactDiffViewerState {
   contentColumnWidth: number | null;
   charWidth: number | null;
   cumulativeOffsets: number[] | null;
+  // Line range selection state
+  rangeAnchor: string | null;
+  rangeStart: string | null;
+  rangeEnd: string | null;
 }
 
 class DiffViewer extends React.Component<
@@ -226,6 +245,9 @@ class DiffViewer extends React.Component<
       contentColumnWidth: null,
       charWidth: null,
       cumulativeOffsets: null,
+      rangeAnchor: null,
+      rangeStart: null,
+      rangeEnd: null,
     };
   }
 
@@ -242,6 +264,103 @@ class DiffViewer extends React.Component<
   private getHighlightLinesSet: (lines: string[] | undefined) => Set<string> = memoize(
     (lines: string[] | undefined): Set<string> => new Set(lines || []),
   );
+
+  /**
+   * Expands a start/end line ID pair into a Set of all line IDs in the range.
+   * E.g. expandRange("L-5", "L-10") => Set{"L-5","L-6","L-7","L-8","L-9","L-10"}
+   */
+  private static expandRange(startId: string, endId: string): Set<string> {
+    const [prefix, startNum] = startId.split('-');
+    const [, endNum] = endId.split('-');
+    const lo = Math.min(Number(startNum), Number(endNum));
+    const hi = Math.max(Number(startNum), Number(endNum));
+    const set = new Set<string>();
+    for (let i = lo; i <= hi; i++) {
+      set.add(`${prefix}-${i}`);
+    }
+    return set;
+  }
+
+  /**
+   * Memoized computation of the range selection Set from rangeStart/rangeEnd state.
+   */
+  private getRangeSelectionSet: (rangeStart: string | null, rangeEnd: string | null) => Set<string> = memoize(
+    (rangeStart: string | null, rangeEnd: string | null): Set<string> => {
+      if (rangeStart && rangeEnd) {
+        return DiffViewer.expandRange(rangeStart, rangeEnd);
+      }
+      return new Set();
+    },
+  );
+
+  /**
+   * Internal click handler for line numbers that wraps the consumer's onLineNumberClick
+   * and adds range selection logic when enableLineRangeSelection is true.
+   */
+  private handleLineNumberClickInternal = (
+    lineId: string,
+    event: React.MouseEvent<HTMLTableCellElement>,
+  ): void => {
+    // Always forward to the consumer's callback first
+    this.props.onLineNumberClick?.(lineId, event);
+
+    if (!this.props.enableLineRangeSelection) return;
+
+    if (event.shiftKey && this.state.rangeAnchor) {
+      const [anchorPrefix] = this.state.rangeAnchor.split('-');
+      const [clickPrefix] = lineId.split('-');
+      if (anchorPrefix === clickPrefix) {
+        // Same side: complete the range
+        this.setState({
+          rangeStart: this.state.rangeAnchor,
+          rangeEnd: lineId,
+        });
+        this.props.onLineRangeSelected?.(this.state.rangeAnchor, lineId);
+      } else {
+        // Cross-side: reset anchor, clear range
+        this.setState({
+          rangeAnchor: lineId,
+          rangeStart: null,
+          rangeEnd: null,
+        });
+      }
+    } else {
+      // Non-shift click: set new anchor, clear range
+      this.setState({
+        rangeAnchor: lineId,
+        rangeStart: null,
+        rangeEnd: null,
+      });
+    }
+  };
+
+  /**
+   * Context menu handler for diff rows. Fires onLineRangeContextMenu
+   * only when right-clicking a row within the current range selection.
+   */
+  private handleRowContextMenu = (
+    event: React.MouseEvent<HTMLTableRowElement>,
+  ): void => {
+    if (!this.props.onLineRangeContextMenu) return;
+
+    const { rangeStart, rangeEnd } = this.state;
+    if (!rangeStart || !rangeEnd) return;
+
+    const rangeSet = this.getRangeSelectionSet(rangeStart, rangeEnd);
+    if (rangeSet.size === 0) return;
+
+    const tr = event.currentTarget;
+    const leftLine = tr.dataset.leftLine;
+    const rightLine = tr.dataset.rightLine;
+
+    const leftInRange = leftLine && rangeSet.has(`L-${leftLine}`);
+    const rightInRange = rightLine && rangeSet.has(`R-${rightLine}`);
+
+    if (leftInRange || rightInRange) {
+      event.preventDefault();
+      this.props.onLineRangeContextMenu(event, rangeStart, rangeEnd);
+    }
+  };
 
   /**
    * Creates a ref callback for a CommentRow's <tr> element.
@@ -731,6 +850,8 @@ class DiffViewer extends React.Component<
     const hasRenderGutter = !!this.props.renderGutter;
     // Build Set for O(1) highlight line lookups
     const highlightLinesSet = this.getHighlightLinesSet(this.props.highlightLines);
+    // Build Set for O(1) range selection lookups
+    const rangeSet = this.getRangeSelectionSet(this.state.rangeStart, this.state.rangeEnd);
     // Build Set for O(1) expanded block lookups
     const expandedBlocksSet = new Set(expandedBlocks);
 
@@ -887,12 +1008,13 @@ class DiffViewer extends React.Component<
           rightLineNumber={line.right.lineNumber}
           rightType={line.right.type}
           rightValue={rightValue}
-          highlightLeft={highlightLinesSet.has(`L-${line.left.lineNumber}`)}
-          highlightRight={highlightLinesSet.has(`R-${line.right.lineNumber}`)}
+          highlightLeft={highlightLinesSet.has(`L-${line.left.lineNumber}`) || rangeSet.has(`L-${line.left.lineNumber}`)}
+          highlightRight={highlightLinesSet.has(`R-${line.right.lineNumber}`) || rangeSet.has(`R-${line.right.lineNumber}`)}
           splitView={splitView}
           hideLineNumbers={this.props.hideLineNumbers}
           styles={this.styles}
-          onLineNumberClick={this.props.onLineNumberClick}
+          onLineNumberClick={this.handleLineNumberClickInternal}
+          onRowContextMenu={this.handleRowContextMenu}
           renderContent={this.props.renderContent}
           renderGutter={this.props.renderGutter}
           compareMethod={this.props.compareMethod}

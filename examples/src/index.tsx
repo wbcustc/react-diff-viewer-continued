@@ -56,21 +56,26 @@ class Example extends Component<{}, ExampleState> {
     id: string,
     e: MouseEvent<HTMLTableCellElement>,
   ): void => {
-    let highlightLine = [id];
-    if (e.shiftKey && this.state.highlightLine.length === 1) {
-      const [dir, oldId] = this.state.highlightLine[0].split('-');
-      const [newDir, newId] = id.split('-');
-      if (dir === newDir) {
-        highlightLine = [];
-        const lowEnd = Math.min(Number(oldId), Number(newId));
-        const highEnd = Math.max(Number(oldId), Number(newId));
-        for (let i = lowEnd; i <= highEnd; i++) {
-          highlightLine.push(`${dir}-${i}`);
-        }
-      }
-    }
     this.setState({
-      highlightLine,
+      highlightLine: [id],
+    });
+  };
+
+  private onLineRangeSelected = (
+    startLineId: string,
+    endLineId: string,
+  ): void => {
+    console.log(`Range selected: ${startLineId} to ${endLineId}`);
+  };
+
+  private onLineRangeContextMenu = (
+    event: MouseEvent<HTMLTableRowElement>,
+    startLineId: string,
+    endLineId: string,
+  ): void => {
+    console.log(`Context menu on range: ${startLineId} to ${endLineId}`, {
+      clientX: event.clientX,
+      clientY: event.clientY,
     });
   };
 
@@ -324,6 +329,9 @@ class Example extends Component<{}, ExampleState> {
           <ReactDiff
             highlightLines={this.state.highlightLine}
             onLineNumberClick={this.onLineNumberClick}
+            enableLineRangeSelection={true}
+            onLineRangeSelected={this.onLineRangeSelected}
+            onLineRangeContextMenu={this.onLineRangeContextMenu}
             alwaysShowLines={['L-30']}
             extraLinesSurroundingDiff={1}
             hideLineNumbers={!this.state.lineNumbers}

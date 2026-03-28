@@ -37,6 +37,9 @@ export interface DiffRowProps {
     lineId: string,
     event: React.MouseEvent<HTMLTableCellElement>,
   ) => void;
+  onRowContextMenu?: (
+    event: React.MouseEvent<HTMLTableRowElement>,
+  ) => void;
   renderContent?: (source: string) => ReactElement;
   renderGutter?: (data: {
     lineNumber: number;
@@ -253,6 +256,7 @@ export const DiffRow = React.memo(function DiffRow(props: DiffRowProps): ReactEl
     hideLineNumbers,
     styles,
     onLineNumberClick,
+    onRowContextMenu,
     renderContent,
     renderGutter,
     compareMethod,
@@ -264,7 +268,7 @@ export const DiffRow = React.memo(function DiffRow(props: DiffRowProps): ReactEl
   if (splitView) {
     // Split view: one <tr> with left and right cells
     return (
-      <tr key={index} className={styles.line}>
+      <tr key={index} className={styles.line} onContextMenu={onRowContextMenu} data-left-line={leftLineNumber} data-right-line={rightLineNumber}>
         {renderLine(
           leftLineNumber,
           leftType,
@@ -304,7 +308,7 @@ export const DiffRow = React.memo(function DiffRow(props: DiffRowProps): ReactEl
     // Changed line: render two <tr> rows (removed then added)
     return (
       <React.Fragment key={index}>
-        <tr className={styles.line}>
+        <tr className={styles.line} onContextMenu={onRowContextMenu} data-left-line={leftLineNumber} data-right-line={rightLineNumber}>
           {renderLine(
             leftLineNumber,
             leftType,
@@ -323,7 +327,7 @@ export const DiffRow = React.memo(function DiffRow(props: DiffRowProps): ReactEl
             null,
           )}
         </tr>
-        <tr className={styles.line}>
+        <tr className={styles.line} onContextMenu={onRowContextMenu} data-left-line={leftLineNumber} data-right-line={rightLineNumber}>
           {renderLine(
             null,
             rightType,
@@ -408,7 +412,7 @@ export const DiffRow = React.memo(function DiffRow(props: DiffRowProps): ReactEl
   }
 
   return (
-    <tr key={index} className={styles.line}>
+    <tr key={index} className={styles.line} onContextMenu={onRowContextMenu} data-left-line={leftLineNumber} data-right-line={rightLineNumber}>
       {content}
     </tr>
   );
