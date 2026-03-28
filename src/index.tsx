@@ -325,12 +325,13 @@ class DiffViewer extends React.Component<
         });
       }
     } else {
-      // Non-shift click: set new anchor, clear range
+      // Non-shift click: set new anchor and 1-line range
       this.setState({
         rangeAnchor: lineId,
-        rangeStart: null,
-        rangeEnd: null,
+        rangeStart: lineId,
+        rangeEnd: lineId,
       });
+      this.props.onLineRangeSelected?.(lineId, lineId);
     }
   };
 

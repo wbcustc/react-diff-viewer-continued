@@ -293,8 +293,10 @@ describe("DiffViewer line range selection", () => {
     fireEvent.click(gutterCells[0]);
     fireEvent.click(gutterCells[2], { shiftKey: true });
 
-    expect(onLineRangeSelected).toHaveBeenCalledTimes(1);
-    const [startId, endId] = onLineRangeSelected.mock.calls[0];
+    expect(onLineRangeSelected).toHaveBeenCalledTimes(2);
+    // First call: single click sets 1-line range
+    // Second call: shift+click extends range
+    const [startId, endId] = onLineRangeSelected.mock.calls[1];
     expect(startId).toMatch(/^[LR]-\d+$/);
     expect(endId).toMatch(/^[LR]-\d+$/);
   });
@@ -322,14 +324,14 @@ describe("DiffViewer line range selection", () => {
     // Select first range
     fireEvent.click(gutterCells[0]);
     fireEvent.click(gutterCells[2], { shiftKey: true });
-    expect(onLineRangeSelected).toHaveBeenCalledTimes(1);
+    expect(onLineRangeSelected).toHaveBeenCalledTimes(2);
 
     // Non-shift click resets anchor
     fireEvent.click(gutterCells[4]);
 
     // Shift+click from the new anchor
     fireEvent.click(gutterCells[5], { shiftKey: true });
-    expect(onLineRangeSelected).toHaveBeenCalledTimes(2);
+    expect(onLineRangeSelected).toHaveBeenCalledTimes(4);
   });
 
   it("fires onLineRangeContextMenu when right-clicking a row within the range", async () => {
@@ -446,6 +448,6 @@ describe("DiffViewer line range selection", () => {
     fireEvent.click(gutterCells[0]);
     fireEvent.click(gutterCells[2], { shiftKey: true });
 
-    expect(onLineRangeSelected).toHaveBeenCalledTimes(1);
+    expect(onLineRangeSelected).toHaveBeenCalledTimes(2);
   });
 });
